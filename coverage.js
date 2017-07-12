@@ -1,31 +1,37 @@
 'use strict';
 
+// require('pretty-exceptions/source-native')
+require('pretty-error').start();
+
 const chromeLauncher = require('chrome-launcher');
 const CDP = require('chrome-remote-interface');
 
 const launchChrome = () =>
   chromeLauncher.launch({
-    chromeFlags: ['--disable-gpu', '--headless']
+    chromeFlags: ['--disable-gpu', '--headless'],
+    logLevel: 'error'
   });
+
+/* global Common SDK Coverage Protocol */
 
 launchChrome()
   .then(async chrome => {
     const protocol = await CDP({port: chrome.port});
     try {
       const {Page, Profiler} = protocol;
+
+      installAgents(protocol);
+
       await Profiler.enable();
       await Page.enable();
 
-      const model = new CoverageModel(Profiler);
-      await Profiler.startPreciseCoverage();
+      const model = new Coverage.CoverageModel(target);
+      model.start();
 
       Page.navigate({url: 'https://paulirish.com/'});
       await Page.loadEventFired();
 
-      const res = await Profiler.takePreciseCoverage();
-      await Profiler.stopPreciseCoverage();
-
-      const coverage = calculateCoverage(res);
+      const coverage = await model.stop();
       console.log(coverage);
     } catch (err) {
       console.error(err);
@@ -36,159 +42,181 @@ launchChrome()
   })
   .catch(err => console.error(err));
 
-// edited from from https://github.com/ChromeDevTools/devtools-frontend/blob/master/front_end/coverage/CoverageModel.js
+// let's setup devtools env
+global.Common = {};
+global.SDK = {};
+global.Coverage = {};
+global.Protocol = {};
 
-const CoverageModel = class {
+// Dependencies
+require('chrome-devtools-frontend/front_end/common/Object.js');
+
+require('chrome-devtools-frontend/front_end/protocol/InspectorBackend.js');
+require('chrome-devtools-frontend/front_end/sdk/Target.js');
+require('chrome-devtools-frontend/front_end/sdk/DebuggerModel.js');
+require('chrome-devtools-frontend/front_end/coverage/CoverageModel.js');
+
+require('chrome-devtools-frontend/front_end/sdk/CPUProfilerModel.js');
+require('chrome-devtools-frontend/front_end/sdk/RuntimeModel.js');
+require('chrome-devtools-frontend/front_end/sdk/CSSModel.js');
+
+// global.self = global;
+global.Multimap = defineMultimap();
+require('chrome-devtools-frontend/front_end/sdk/SourceMapManager.js'); // for debuggermodel
+
+require('chrome-devtools-frontend/front_end/sdk/TargetManager.js');
+
+Common.moduleSetting = function(module) {
+  return {
+    addChangeListener: _ => true,
+    get: _ => false
+  };
+};
+
+function createTarget() {
+  // const targetManager = {
+  //   modelAdded: _ => true,
+  //   addEventListener: _ => true
+  // };
+  const targetManager = SDK.targetManager;
+
+  const id = 'main';
+  const name = 'Main';
+  const capabilitiesMask = SDK.Target.Capability.JS;
+  const connectionFactory = function() {
+    console.log('connected via CRI, folks');
+  };
+  const parentTarget = null;
+
+  const target = new SDK.Target(
+    targetManager,
+    id,
+    name,
+    capabilitiesMask,
+    connectionFactory,
+    parentTarget
+  );
+  return target;
+}
+
+function installAgents(protocol) {
+  target.profilerAgent = _ => protocol.Profiler;
+  target.debuggerAgent = _ => protocol.Debugger;
+  target.runtimeAgent = _ => protocol.Runtime;
+
+  target.registerProfilerDispatcher = _ => console.log('registering Profiler dispatcher');
+  target.registerDebuggerDispatcher = _ => console.log('registering Debugger dispatcher');
+  target.registerRuntimeDispatcher = _ => console.log('registering Runtime dispatcher');
+}
+
+const target = createTarget();
+
+
+// from utilities
+function defineMultimap() {
+
   /**
-   * @param {!SDK.Target} target
+   * @constructor
+   * @template K, V
    */
-  constructor(Profiler) {
-    this._Profiler = Profiler;
-    // this._cpuProfilerModel = target.model(SDK.CPUProfilerModel);
-    // this._debuggerModel = target.model(SDK.DebuggerModel);
+  var Multimap = function() {
+    /** @type {!Map.<K, !Set.<!V>>} */
+    this._map = new Map();
+  };
 
-    /** @type {!Map<string, !Coverage.URLCoverageInfo>} */
-    this._coverageByURL = new Map();
-    /** @type {!Map<!Common.ContentProvider, !Coverage.CoverageInfo>} */
-    this._coverageByContentProvider = new Map();
-  }
-
-  /**
-   * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
-   */
-  stop() {
-    var pollPromise = this.poll();
-    this._Profiler.stopPreciseCoverage();
-    return pollPromise;
-  }
-
-  /**
-   * @return {!Promise<!Coverage.CoverageInfo>}
-   */
-  poll() {
-    return this._takeJSCoverage();
-  }
-
-  /**
-   * @return {!Array<!Coverage.URLCoverageInfo>}
-   */
-  entries() {
-    return Array.from(this._coverageByURL.values());
-  }
-
-  /**
-   * @param {!Common.ContentProvider} contentProvider
-   * @param {number} startOffset
-   * @param {number} endOffset
-   * @return {boolean|undefined}
-   */
-  usageForRange(contentProvider, startOffset, endOffset) {
-    var coverageInfo = this._coverageByContentProvider.get(contentProvider);
-    return coverageInfo && coverageInfo.usageForRange(startOffset, endOffset);
-  }
-
-  /**
-   * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
-   */
-  async _takeJSCoverage() {
-    var rawCoverageData = await this._Profiler.takePreciseCoverage().result;
-    return this._processJSCoverage(rawCoverageData);
-  }
-
-  /**
-   * @param {!Array<!Protocol.Profiler.ScriptCoverage>} scriptsCoverage
-   * @return {!Array<!Coverage.CoverageInfo>}
-   */
-  _processJSCoverage(scriptsCoverage) {
-    var updatedEntries = [];
-    for (var entry of scriptsCoverage) {
-      // var script = this._debuggerModel.scriptForId(entry.scriptId);
-      // if (!script)
-      //   continue;
-      var ranges = [];
-      for (var func of entry.functions) {
-        for (var range of func.ranges)
-          ranges.push(range);
+  Multimap.prototype = {
+    /**
+     * @param {K} key
+     * @param {V} value
+     */
+    set: function(key, value) {
+      var set = this._map.get(key);
+      if (!set) {
+        set = new Set();
+        this._map.set(key, set);
       }
-      var entry = this._addCoverage(scriptId, url, ranges);
-      if (entry)
-        updatedEntries.push(entry);
-    }
-    return updatedEntries;
-  }
-
-  /**
-   * @param {!Array<!Coverage.RangeUseCount>} ranges
-   * @return {!Array<!Coverage.CoverageSegment>}
-   */
-  static _convertToDisjointSegments(ranges) {
-    ranges.sort((a, b) => a.startOffset - b.startOffset);
-
-    var result = [];
-    var stack = [];
-    for (var entry of ranges) {
-      var top = stack.peekLast();
-      while (top && top.endOffset <= entry.startOffset) {
-        append(top.endOffset, top.count);
-        stack.pop();
-        top = stack.peekLast();
-      }
-      append(entry.startOffset, top ? top.count : undefined);
-      stack.push(entry);
-    }
-
-    while (stack.length) {
-      var top = stack.pop();
-      append(top.endOffset, top.count);
-    }
+      set.add(value);
+    },
 
     /**
-     * @param {number} end
-     * @param {number} count
+     * @param {K} key
+     * @return {!Set.<!V>}
      */
-    function append(end, count) {
-      var last = result.peekLast();
-      if (last) {
-        if (last.end === end)
-          return;
-        if (last.count === count) {
-          last.end = end;
-          return;
-        }
-      }
-      result.push({end: end, count: count});
-    }
+    get: function(key) {
+      var result = this._map.get(key);
+      if (!result)
+        result = new Set();
+      return result;
+    },
 
-    return result;
-  }
+    /**
+     * @param {K} key
+     * @return {boolean}
+     */
+    has: function(key) {
+      return this._map.has(key);
+    },
 
-  /**
-   * @param {!Common.ContentProvider} contentProvider
-   * @param {number} contentLength
-   * @param {number} startLine
-   * @param {number} startColumn
-   * @param {!Array<!Coverage.RangeUseCount>} ranges
-   * @return {?Coverage.CoverageInfo}
-   */
-  _addCoverage(contentProvider, contentLength, startLine, startColumn, ranges) {
-    var url = contentProvider.contentURL();
-    if (!url)
-      return null;
-    var urlCoverage = this._coverageByURL.get(url);
-    if (!urlCoverage) {
-      urlCoverage = new Coverage.URLCoverageInfo(url);
-      this._coverageByURL.set(url, urlCoverage);
+    /**
+     * @param {K} key
+     * @param {V} value
+     * @return {boolean}
+     */
+    hasValue: function(key, value) {
+      var set = this._map.get(key);
+      if (!set)
+        return false;
+      return set.has(value);
+    },
+
+    /**
+     * @return {number}
+     */
+    get size() {
+      return this._map.size;
+    },
+
+    /**
+     * @param {K} key
+     * @param {V} value
+     * @return {boolean}
+     */
+    delete: function(key, value) {
+      var values = this.get(key);
+      var result = values.delete(value);
+      if (!values.size)
+        this._map.delete(key);
+      return result;
+    },
+
+    /**
+     * @param {K} key
+     */
+    deleteAll: function(key) {
+      this._map.delete(key);
+    },
+
+    /**
+     * @return {!Array.<K>}
+     */
+    keysArray: function() {
+      return this._map.keysArray();
+    },
+
+    /**
+     * @return {!Array.<!V>}
+     */
+    valuesArray: function() {
+      var result = [];
+      var keys = this.keysArray();
+      for (var i = 0; i < keys.length; ++i)
+        result.pushAll(this.get(keys[i]).valuesArray());
+      return result;
+    },
+
+    clear: function() {
+      this._map.clear();
     }
-    var coverageInfo = urlCoverage._ensureEntry(contentProvider, contentLength, startLine, startColumn);
-    this._coverageByContentProvider.set(contentProvider, coverageInfo);
-    var segments = Coverage.CoverageModel._convertToDisjointSegments(ranges);
-    if (segments.length && segments.peekLast().end < contentLength)
-      segments.push({end: contentLength});
-    var oldUsedSize = coverageInfo._usedSize;
-    coverageInfo.mergeCoverage(segments);
-    if (coverageInfo._usedSize === oldUsedSize)
-      return null;
-    urlCoverage._usedSize += coverageInfo._usedSize - oldUsedSize;
-    return coverageInfo;
-  }
-};
+  };
+  return Multimap;
+}
