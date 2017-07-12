@@ -53,7 +53,6 @@ global.Protocol = {};
 
 // Dependencies
 require('chrome-devtools-frontend/front_end/common/Object.js');
-
 require('chrome-devtools-frontend/front_end/protocol/InspectorBackend.js');
 require('chrome-devtools-frontend/front_end/sdk/Target.js');
 require('chrome-devtools-frontend/front_end/sdk/DebuggerModel.js');
@@ -63,10 +62,8 @@ require('chrome-devtools-frontend/front_end/sdk/CPUProfilerModel.js');
 require('chrome-devtools-frontend/front_end/sdk/RuntimeModel.js');
 require('chrome-devtools-frontend/front_end/sdk/CSSModel.js');
 
-// Global.self = global;
 global.Multimap = defineMultimap();
 require('chrome-devtools-frontend/front_end/sdk/SourceMapManager.js'); // For debuggermodel
-
 require('chrome-devtools-frontend/front_end/sdk/TargetManager.js');
 
 Common.moduleSetting = function(module) {
