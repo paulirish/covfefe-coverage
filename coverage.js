@@ -43,7 +43,6 @@ Coverage.CoverageModel = class extends SDK.SDKModel {
   constructor(target) {
     super(target);
     this._cpuProfilerModel = target.model(SDK.CPUProfilerModel);
-    this._cssModel = target.model(SDK.CSSModel);
     this._debuggerModel = target.model(SDK.DebuggerModel);
 
     /** @type {!Map<string, !Coverage.URLCoverageInfo>} */
@@ -105,23 +104,6 @@ Coverage.CoverageModel = class extends SDK.SDKModel {
     return coverageInfo && coverageInfo.usageForRange(startOffset, endOffset);
   }
 
-  _clearCSS() {
-    for (var entry of this._coverageByContentProvider.values()) {
-      if (entry.type() !== Coverage.CoverageType.CSS)
-        continue;
-      var contentProvider = /** @type {!SDK.CSSStyleSheetHeader} */ (entry.contentProvider());
-      this._coverageByContentProvider.delete(contentProvider);
-      var key = `${contentProvider.startLine}:${contentProvider.startColumn}`;
-      var urlEntry = this._coverageByURL.get(entry.url());
-      if (!urlEntry || !urlEntry._coverageInfoByLocation.delete(key))
-        continue;
-      urlEntry._size -= entry._size;
-      urlEntry._usedSize -= entry._usedSize;
-      if (!urlEntry._coverageInfoByLocation.size)
-        this._coverageByURL.delete(entry.url());
-    }
-  }
-
   /**
    * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
    */
@@ -148,47 +130,6 @@ Coverage.CoverageModel = class extends SDK.SDKModel {
           ranges.push(range);
       }
       var entry = this._addCoverage(script, script.contentLength, script.lineOffset, script.columnOffset, ranges);
-      if (entry)
-        updatedEntries.push(entry);
-    }
-    return updatedEntries;
-  }
-
-  /**
-   * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
-   */
-  async _takeCSSCoverage() {
-    if (!this._cssModel)
-      return [];
-    var rawCoverageData = await this._cssModel.takeCoverageDelta();
-    return this._processCSSCoverage(rawCoverageData);
-  }
-
-  /**
-   * @param {!Array<!Protocol.CSS.RuleUsage>} ruleUsageList
-   * @return {!Array<!Coverage.CoverageInfo>}
-   */
-  _processCSSCoverage(ruleUsageList) {
-    var updatedEntries = [];
-    /** @type {!Map<!SDK.CSSStyleSheetHeader, !Array<!Coverage.RangeUseCount>>} */
-    var rulesByStyleSheet = new Map();
-    for (var rule of ruleUsageList) {
-      var styleSheetHeader = this._cssModel.styleSheetHeaderForId(rule.styleSheetId);
-      if (!styleSheetHeader)
-        continue;
-      var ranges = rulesByStyleSheet.get(styleSheetHeader);
-      if (!ranges) {
-        ranges = [];
-        rulesByStyleSheet.set(styleSheetHeader, ranges);
-      }
-      ranges.push({startOffset: rule.startOffset, endOffset: rule.endOffset, count: Number(rule.used)});
-    }
-    for (var entry of rulesByStyleSheet) {
-      var styleSheetHeader = /** @type {!SDK.CSSStyleSheetHeader} */ (entry[0]);
-      var ranges = /** @type {!Array<!Coverage.RangeUseCount>} */ (entry[1]);
-      var entry = this._addCoverage(
-          styleSheetHeader, styleSheetHeader.contentLength, styleSheetHeader.startLine, styleSheetHeader.startColumn,
-          ranges);
       if (entry)
         updatedEntries.push(entry);
     }
