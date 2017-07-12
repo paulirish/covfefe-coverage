@@ -32,7 +32,9 @@ launchChrome()
       Page.navigate({url: 'https://paulirish.com/'});
       await Page.loadEventFired();
 
-      const coverage = await model.stop();
+      await model.stop();
+      const coverage = model.entries();
+
       console.log(coverage);
     } catch (err) {
       console.error(err);
@@ -113,19 +115,26 @@ function installAgents(cdp) {
   target.registerDebuggerDispatcher = _ => console.log('registering Debugger dispatcher');
   target.registerRuntimeDispatcher = _ => console.log('registering Runtime dispatcher');
 
-  // install a proxy over every CDP method in each domain passed in
+  // Install a proxy over every CDP method in each domain passed in
   function installProxies(cdpDomain, domainStr) {
     for (const fnName of Object.keys(cdpDomain)) {
       const method = `${domainStr}.${fnName}`;
       if (typeof cdpDomain[fnName] !== 'function') continue;
 
-      // install a proxy over the original method
+      // Install a proxy over the original method
       const proxyHandler = {
         apply(target, thisArg, args) {
-          // FIXME: could avoid unspread if args.length === 0..
-          console.log(`${method} proxied!`);
-          const opts = unspreadArguments(method, args);
-          return target.call(thisArg, opts);
+          // Note: `method` from parent scope is trapped.
+          const opts = args.length ? unspreadArguments(method, args) : {};
+
+          return target.call(thisArg, opts).then(res => {
+            // DevTools expects both error handling and unwrapping the {result}
+            if (res.error) {
+              console.error('Protocol error', res.error);
+              return Promise.reject(new Error(res.error));
+            }
+            return res.result;
+          });
         }
       };
       cdpDomain[fnName] = new Proxy(cdpDomain[fnName], proxyHandler);
