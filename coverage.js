@@ -16,6 +16,7 @@ launchChrome()
       await Profiler.enable();
       await Page.enable();
 
+      const model = new CoverageModel(Profiler);
       await Profiler.startPreciseCoverage();
 
       Page.navigate({url: 'https://paulirish.com/'});
@@ -35,15 +36,16 @@ launchChrome()
   })
   .catch(err => console.error(err));
 
-// verbatim from https://github.com/ChromeDevTools/devtools-frontend/blob/master/front_end/coverage/CoverageModel.js
-Coverage.CoverageModel = class extends SDK.SDKModel {
+// edited from from https://github.com/ChromeDevTools/devtools-frontend/blob/master/front_end/coverage/CoverageModel.js
+
+const CoverageModel = class {
   /**
    * @param {!SDK.Target} target
    */
-  constructor(target) {
-    super(target);
-    this._cpuProfilerModel = target.model(SDK.CPUProfilerModel);
-    this._debuggerModel = target.model(SDK.DebuggerModel);
+  constructor(Profiler) {
+    this._Profiler = Profiler;
+    // this._cpuProfilerModel = target.model(SDK.CPUProfilerModel);
+    // this._debuggerModel = target.model(SDK.DebuggerModel);
 
     /** @type {!Map<string, !Coverage.URLCoverageInfo>} */
     this._coverageByURL = new Map();
@@ -52,38 +54,19 @@ Coverage.CoverageModel = class extends SDK.SDKModel {
   }
 
   /**
-   * @return {boolean}
-   */
-  start() {
-    if (this._cssModel) {
-      // Note there's no JS coverage since JS won't ever return
-      // coverage twice, even after it's restarted.
-      this._clearCSS();
-      this._cssModel.startCoverage();
-    }
-    if (this._cpuProfilerModel)
-      this._cpuProfilerModel.startPreciseCoverage();
-    return !!(this._cssModel || this._cpuProfilerModel);
-  }
-
-  /**
    * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
    */
   stop() {
     var pollPromise = this.poll();
-    if (this._cpuProfilerModel)
-      this._cpuProfilerModel.stopPreciseCoverage();
-    if (this._cssModel)
-      this._cssModel.stopCoverage();
+    this._Profiler.stopPreciseCoverage();
     return pollPromise;
   }
 
   /**
-   * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
+   * @return {!Promise<!Coverage.CoverageInfo>}
    */
-  async poll() {
-    var updates = await Promise.all([this._takeCSSCoverage(), this._takeJSCoverage()]);
-    return updates[0].concat(updates[1]);
+  poll() {
+    return this._takeJSCoverage();
   }
 
   /**
@@ -108,9 +91,7 @@ Coverage.CoverageModel = class extends SDK.SDKModel {
    * @return {!Promise<!Array<!Coverage.CoverageInfo>>}
    */
   async _takeJSCoverage() {
-    if (!this._cpuProfilerModel)
-      return [];
-    var rawCoverageData = await this._cpuProfilerModel.takePreciseCoverage();
+    var rawCoverageData = await this._Profiler.takePreciseCoverage().result;
     return this._processJSCoverage(rawCoverageData);
   }
 
@@ -121,15 +102,15 @@ Coverage.CoverageModel = class extends SDK.SDKModel {
   _processJSCoverage(scriptsCoverage) {
     var updatedEntries = [];
     for (var entry of scriptsCoverage) {
-      var script = this._debuggerModel.scriptForId(entry.scriptId);
-      if (!script)
-        continue;
+      // var script = this._debuggerModel.scriptForId(entry.scriptId);
+      // if (!script)
+      //   continue;
       var ranges = [];
       for (var func of entry.functions) {
         for (var range of func.ranges)
           ranges.push(range);
       }
-      var entry = this._addCoverage(script, script.contentLength, script.lineOffset, script.columnOffset, ranges);
+      var entry = this._addCoverage(scriptId, url, ranges);
       if (entry)
         updatedEntries.push(entry);
     }
