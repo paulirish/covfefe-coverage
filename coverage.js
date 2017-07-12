@@ -1,10 +1,11 @@
 'use strict';
 
-// require('pretty-exceptions/source-native')
+// Require('pretty-exceptions/source-native')
 require('pretty-error').start();
 
 const chromeLauncher = require('chrome-launcher');
 const CDP = require('chrome-remote-interface');
+const js_protocol = require('devtools-protocol/json/js_protocol.json');
 
 const launchChrome = () =>
   chromeLauncher.launch({
@@ -16,11 +17,11 @@ const launchChrome = () =>
 
 launchChrome()
   .then(async chrome => {
-    const protocol = await CDP({port: chrome.port});
+    const cdp = await CDP({port: chrome.port});
     try {
-      const {Page, Profiler} = protocol;
+      const {Page, Profiler} = cdp;
 
-      installAgents(protocol);
+      installAgents(cdp);
 
       await Profiler.enable();
       await Page.enable();
@@ -36,13 +37,13 @@ launchChrome()
     } catch (err) {
       console.error(err);
     } finally {
-      protocol.close();
+      cdp.close();
       chrome.kill();
     }
   })
   .catch(err => console.error(err));
 
-// let's setup devtools env
+// Let's setup devtools env
 global.Common = {};
 global.SDK = {};
 global.Coverage = {};
@@ -60,9 +61,9 @@ require('chrome-devtools-frontend/front_end/sdk/CPUProfilerModel.js');
 require('chrome-devtools-frontend/front_end/sdk/RuntimeModel.js');
 require('chrome-devtools-frontend/front_end/sdk/CSSModel.js');
 
-// global.self = global;
+// Global.self = global;
 global.Multimap = defineMultimap();
-require('chrome-devtools-frontend/front_end/sdk/SourceMapManager.js'); // for debuggermodel
+require('chrome-devtools-frontend/front_end/sdk/SourceMapManager.js'); // For debuggermodel
 
 require('chrome-devtools-frontend/front_end/sdk/TargetManager.js');
 
@@ -74,7 +75,7 @@ Common.moduleSetting = function(module) {
 };
 
 function createTarget() {
-  // const targetManager = {
+  // Const targetManager = {
   //   modelAdded: _ => true,
   //   addEventListener: _ => true
   // };
@@ -99,27 +100,63 @@ function createTarget() {
   return target;
 }
 
-function installAgents(protocol) {
-  target.profilerAgent = _ => protocol.Profiler;
-  target.debuggerAgent = _ => protocol.Debugger;
-  target.runtimeAgent = _ => protocol.Runtime;
+function installAgents(cdp) {
+  const profilerAgent = installProxies(cdp.Profiler, 'Profiler');
+  const debuggerAgent = installProxies(cdp.Debugger, 'Debugger');
+  const runtimeAgent = installProxies(cdp.Runtime, 'Runtime');
+
+  target.profilerAgent = _ => profilerAgent;
+  target.debuggerAgent = _ => debuggerAgent;
+  target.runtimeAgent = _ => runtimeAgent;
 
   target.registerProfilerDispatcher = _ => console.log('registering Profiler dispatcher');
   target.registerDebuggerDispatcher = _ => console.log('registering Debugger dispatcher');
   target.registerRuntimeDispatcher = _ => console.log('registering Runtime dispatcher');
+
+  // install a proxy over every CDP method in each domain passed in
+  function installProxies(cdpDomain, domainStr) {
+    for (const fnName of Object.keys(cdpDomain)) {
+      const method = `${domainStr}.${fnName}`;
+      if (typeof cdpDomain[fnName] !== 'function') continue;
+
+      // install a proxy over the original method
+      const proxyHandler = {
+        apply(target, thisArg, args) {
+          // FIXME: could avoid unspread if args.length === 0..
+          console.log(`${method} proxied!`);
+          const opts = unspreadArguments(method, args);
+          return target.call(thisArg, opts);
+        }
+      };
+      cdpDomain[fnName] = new Proxy(cdpDomain[fnName], proxyHandler);
+    }
+    return cdpDomain;
+  }
+  // DevTools agents speak a language of ordered arguments, but CRI takes an object of named properties
+  // Here we convert from the former to the latter
+  function unspreadArguments(method, args) {
+    const domainStr = method.split('.')[0];
+    const commandStr = method.split('.')[1];
+
+    const domain = js_protocol.domains.find(d => d.domain === domainStr);
+    const command = domain.commands.find(c => c.name === commandStr);
+    const opts = {};
+    args.forEach((arg, i) => {
+      opts[command.parameters[i].name] = arg;
+    });
+    return opts;
+  }
 }
 
 const target = createTarget();
 
-
-// from utilities
+// From utilities
 function defineMultimap() {
-
   /**
    * @constructor
    * @template K, V
    */
-  var Multimap = function() {
+  let Multimap = function() {
     /** @type {!Map.<K, !Set.<!V>>} */
     this._map = new Map();
   };
@@ -129,7 +166,7 @@ function defineMultimap() {
      * @param {K} key
      * @param {V} value
      */
-    set: function(key, value) {
+    set(key, value) {
       var set = this._map.get(key);
       if (!set) {
         set = new Set();
@@ -142,10 +179,9 @@ function defineMultimap() {
      * @param {K} key
      * @return {!Set.<!V>}
      */
-    get: function(key) {
+    get(key) {
       var result = this._map.get(key);
-      if (!result)
-        result = new Set();
+      if (!result) result = new Set();
       return result;
     },
 
@@ -153,7 +189,7 @@ function defineMultimap() {
      * @param {K} key
      * @return {boolean}
      */
-    has: function(key) {
+    has(key) {
       return this._map.has(key);
     },
 
@@ -162,10 +198,9 @@ function defineMultimap() {
      * @param {V} value
      * @return {boolean}
      */
-    hasValue: function(key, value) {
+    hasValue(key, value) {
       var set = this._map.get(key);
-      if (!set)
-        return false;
+      if (!set) return false;
       return set.has(value);
     },
 
@@ -181,40 +216,38 @@ function defineMultimap() {
      * @param {V} value
      * @return {boolean}
      */
-    delete: function(key, value) {
+    delete(key, value) {
       var values = this.get(key);
       var result = values.delete(value);
-      if (!values.size)
-        this._map.delete(key);
+      if (!values.size) this._map.delete(key);
       return result;
     },
 
     /**
      * @param {K} key
      */
-    deleteAll: function(key) {
+    deleteAll(key) {
       this._map.delete(key);
     },
 
     /**
      * @return {!Array.<K>}
      */
-    keysArray: function() {
+    keysArray() {
       return this._map.keysArray();
     },
 
     /**
      * @return {!Array.<!V>}
      */
-    valuesArray: function() {
+    valuesArray() {
       var result = [];
       var keys = this.keysArray();
-      for (var i = 0; i < keys.length; ++i)
-        result.pushAll(this.get(keys[i]).valuesArray());
+      for (var i = 0; i < keys.length; ++i) result.pushAll(this.get(keys[i]).valuesArray());
       return result;
     },
 
-    clear: function() {
+    clear() {
       this._map.clear();
     }
   };
