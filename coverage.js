@@ -1,13 +1,9 @@
 'use strict';
 
-// Require('pretty-exceptions/source-native')
-require('pretty-error').start();
-
 const URL = require('url').URL;
 const chromeLauncher = require('chrome-launcher');
 const CDP = require('chrome-remote-interface');
 const js_protocol = require('devtools-protocol/json/js_protocol.json');
-
 
 const launchChrome = () =>
   chromeLauncher.launch({
@@ -52,7 +48,6 @@ launchChrome()
           console.log('');
         }
       }
-
     } catch (err) {
       console.error(err);
     } finally {
@@ -68,7 +63,7 @@ global.SDK = {};
 global.Coverage = {};
 global.Protocol = {};
 
-// Dependencies
+// DevTools Dependencies
 require('chrome-devtools-frontend/front_end/common/Object.js');
 require('chrome-devtools-frontend/front_end/protocol/InspectorBackend.js');
 require('chrome-devtools-frontend/front_end/sdk/Target.js');
@@ -87,14 +82,7 @@ require('chrome-devtools-frontend/front_end/common/ParsedURL.js'); // for runtim
 require('chrome-devtools-frontend/front_end/sdk/Script.js'); // for SDK.DebuggerModel._parsedScriptSource
 require('chrome-devtools-frontend/front_end/common/ResourceType.js'); // for SDK.Script.contentType
 
-
-
-
 function createTarget() {
-  // Const targetManager = {
-  //   modelAdded: _ => true,
-  //   addEventListener: _ => true
-  // };
   const targetManager = SDK.targetManager;
 
   const id = 'main';
@@ -103,14 +91,7 @@ function createTarget() {
   const connectionFactory = _ => {};
   const parentTarget = null;
 
-  const target = new SDK.Target(
-    targetManager,
-    id,
-    name,
-    capabilitiesMask,
-    connectionFactory,
-    parentTarget
-  );
+  const target = new SDK.Target(targetManager, id, name, capabilitiesMask, connectionFactory, parentTarget);
   return target;
 }
 
@@ -199,21 +180,25 @@ function setupDevToolsTarget(cdp) {
 
 const target = createTarget();
 
+//
+// start of copypasted devtools polyfills
+//
+Common.moduleSetting = settingName => {
+  return {
+    addChangeListener: _ => true,
+    get: _ => false
+  };
+};
 
 /**
  * @param {!Coverage.CoverageType} type
  */
 function coverageTypeToString(type) {
   const types = [];
-  if (type & Coverage.CoverageType.CSS)
-    types.push('CSS');
-  if (type & Coverage.CoverageType.JavaScript)
-    types.push('JS');
+  if (type & Coverage.CoverageType.CSS) types.push('CSS');
+  if (type & Coverage.CoverageType.JavaScript) types.push('JS');
   return types.join('+');
 }
-
-
-// start of all the polyfills
 
 Object.defineProperty(Array.prototype, 'peekLast', {
   /**
@@ -225,14 +210,6 @@ Object.defineProperty(Array.prototype, 'peekLast', {
     return this[this.length - 1];
   }
 });
-
-Common.moduleSetting = settingName => {
-  return {
-    addChangeListener: _ => true,
-    get: _ => false
-  };
-};
-
 
 // From utilities
 /**
