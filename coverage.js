@@ -108,9 +108,27 @@ function installAgents(cdp) {
   target.debuggerAgent = _ => debuggerAgent;
   target.runtimeAgent = _ => runtimeAgent;
 
-  target.registerProfilerDispatcher = _ => console.log('registering Profiler dispatcher');
-  target.registerDebuggerDispatcher = _ => console.log('registering Debugger dispatcher');
-  target.registerRuntimeDispatcher = _ => console.log('registering Runtime dispatcher');
+  target.registerProfilerDispatcher = dpcher => {
+    cdp.on('event', message => {
+      if (!message.method.startsWith('Profiler.')) return;
+      const evtName = message.method.split('.')[1];
+      dpcher[evtName].apply(dpcher, spreadArguments(message.method, message.params));
+    });
+  };
+  target.registerDebuggerDispatcher = dpcher => {
+    cdp.on('event', message => {
+      if (!message.method.startsWith('Debugger.')) return;
+      const evtName = message.method.split('.')[1];
+      dpcher[evtName].apply(dpcher, spreadArguments(message.method, message.params));
+    });
+  };
+  target.registerRuntimeDispatcher = dpcher => {
+    cdp.on('event', message => {
+      if (!message.method.startsWith('Runtime.')) return;
+      const evtName = message.method.split('.')[1];
+      dpcher[evtName].apply(dpcher, spreadArguments(message.method, message.params));
+    });
+  };
 
   // Install a proxy over every CDP method in each domain passed in
   function installProxies(cdpDomain, domainStr) {
@@ -151,6 +169,23 @@ function installAgents(cdp) {
       opts[command.parameters[i].name] = arg;
     });
     return opts;
+  }
+
+  // DevTools agents speak a language of ordered arguments, but CRI takes an object of named properties
+  // Here we convert from the former to the latter
+  function spreadArguments(method, args) {
+    const domainStr = method.split('.')[0];
+    const eventStr = method.split('.')[1];
+
+    const paramsArr = [];
+    if (args) {
+      const domain = js_protocol.domains.find(d => d.domain === domainStr);
+      const parameters = domain.events.find(c => c.name === eventStr).parameters;
+      parameters.forEach(param => {
+        paramsArr.push(args[param.name]);
+      });
+    }
+    return paramsArr;
   }
 }
 
