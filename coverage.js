@@ -23,29 +23,34 @@ launchChrome()
     try {
       const {Page, Profiler} = cdp;
 
-      installAgents(cdp);
+      setupDevToolsTarget(cdp);
 
       await Profiler.enable();
       await Page.enable();
 
-      const model = new Coverage.CoverageModel(target);
-      model.start();
+      const covModel = new Coverage.CoverageModel(target);
+      covModel.start();
 
       Page.navigate({url: 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy'});
       await Page.loadEventFired();
 
-      await model.stop();
-      const coverage = model.entries();
+      await covModel.stop();
+      const coverage = covModel.entries();
 
       coverage.sort((a, b) => b.unusedSize() - a.unusedSize());
 
       console.log('Coverage data: (sorted by unused bytes, descending)');
       for (const file of coverage) {
-        console.log('--------------------------------------');
-        console.log(`File: ${file.url()}`);
-        console.log(`In total: ${file.unusedSize().toLocaleString()}B unused (${(file.unusedSize() / file.size()).toLocaleString()}% unused in the file).`);
-        console.log(`Segments found with more detail: ${file._coverageInfoByLocation.size}`);
-        console.log('');
+        for (const chunk of file._coverageInfoByLocation.values()) {
+          console.log('--------------------------------------');
+          console.log(`${coverageTypeToString(chunk.type())} found in: ${chunk.url()}`);
+          const unusedSize = chunk._size - chunk._usedSize;
+          console.log(`${unusedSize.toLocaleString()}B total unused in chunk. (${(unusedSize / chunk._size).toLocaleString()}%).`);
+
+          const unusedSegments = chunk._segments.filter(seg => seg.count === 0);
+          console.log(`${unusedSegments.length} unused segments and ${chunk._segments.length - unusedSegments.length} used segments found.`);
+          console.log('');
+        }
       }
 
     } catch (err) {
@@ -83,23 +88,7 @@ require('chrome-devtools-frontend/front_end/sdk/Script.js'); // for SDK.Debugger
 require('chrome-devtools-frontend/front_end/common/ResourceType.js'); // for SDK.Script.contentType
 
 
-Object.defineProperty(Array.prototype, 'peekLast', {
-  /**
-   * @return {!T|undefined}
-   * @this {Array.<!T>}
-   * @template T
-   */
-  value: function() {
-    return this[this.length - 1];
-  }
-});
 
-Common.moduleSetting = function(module) {
-  return {
-    addChangeListener: _ => true,
-    get: _ => false
-  };
-};
 
 function createTarget() {
   // Const targetManager = {
@@ -125,7 +114,7 @@ function createTarget() {
   return target;
 }
 
-function installAgents(cdp) {
+function setupDevToolsTarget(cdp) {
   const profilerAgent = installProxies(cdp.Profiler, 'Profiler');
   const debuggerAgent = installProxies(cdp.Debugger, 'Debugger');
   const runtimeAgent = installProxies(cdp.Runtime, 'Runtime');
@@ -156,7 +145,7 @@ function installAgents(cdp) {
       const proxyHandler = {
         apply(target, thisArg, args) {
           // Note: `method` from parent scope is trapped.
-          const opts = args.length ? unspreadArguments(method, args) : {};
+          const opts = unspreadArguments(method, args);
 
           return target.call(thisArg, opts).then(res => {
             // DevTools expects both error handling and unwrapping the {result}
@@ -176,6 +165,8 @@ function installAgents(cdp) {
   // DevTools agents speak a language of ordered arguments, but CRI takes an object of named properties
   // Here we convert from the former to the latter
   function unspreadArguments(method, args) {
+    if (args.length === 0) return {};
+
     const domainStr = method.split('.')[0];
     const commandStr = method.split('.')[1];
 
@@ -207,6 +198,41 @@ function installAgents(cdp) {
 }
 
 const target = createTarget();
+
+
+/**
+ * @param {!Coverage.CoverageType} type
+ */
+function coverageTypeToString(type) {
+  const types = [];
+  if (type & Coverage.CoverageType.CSS)
+    types.push('CSS');
+  if (type & Coverage.CoverageType.JavaScript)
+    types.push('JS');
+  return types.join('+');
+}
+
+
+// start of all the polyfills
+
+Object.defineProperty(Array.prototype, 'peekLast', {
+  /**
+   * @return {!T|undefined}
+   * @this {Array.<!T>}
+   * @template T
+   */
+  value: function() {
+    return this[this.length - 1];
+  }
+});
+
+Common.moduleSetting = settingName => {
+  return {
+    addChangeListener: _ => true,
+    get: _ => false
+  };
+};
+
 
 // From utilities
 /**
