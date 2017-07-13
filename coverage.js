@@ -11,7 +11,6 @@ const launchChrome = () =>
     logLevel: 'error'
   });
 
-/* global Common SDK Coverage */
 
 launchChrome()
   .then(async chrome => {
@@ -48,6 +47,8 @@ launchChrome()
           console.log('');
         }
       }
+      return coverage;
+
     } catch (err) {
       console.error(err);
     } finally {

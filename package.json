@@ -1,7 +1,7 @@
 {
   "name": "covfefe-coverage",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "coverage.js",
   "author": "Paul Irish <paul.irish@gmail.com>",
   "license": "MIT",
   "dependencies": {
