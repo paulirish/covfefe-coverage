@@ -3,9 +3,11 @@
 // Require('pretty-exceptions/source-native')
 require('pretty-error').start();
 
+const URL = require('url').URL;
 const chromeLauncher = require('chrome-launcher');
 const CDP = require('chrome-remote-interface');
 const js_protocol = require('devtools-protocol/json/js_protocol.json');
+
 
 const launchChrome = () =>
   chromeLauncher.launch({
@@ -65,6 +67,23 @@ require('chrome-devtools-frontend/front_end/sdk/CSSModel.js');
 global.Multimap = defineMultimap();
 require('chrome-devtools-frontend/front_end/sdk/SourceMapManager.js'); // For debuggermodel
 require('chrome-devtools-frontend/front_end/sdk/TargetManager.js');
+
+require('chrome-devtools-frontend/front_end/common/ParsedURL.js'); // for runtimemodel
+require('chrome-devtools-frontend/front_end/sdk/Script.js'); // for SDK.DebuggerModel._parsedScriptSource
+require('chrome-devtools-frontend/front_end/common/ResourceType.js'); // for SDK.Script.contentType
+
+
+
+Object.defineProperty(Array.prototype, 'peekLast', {
+  /**
+   * @return {!T|undefined}
+   * @this {Array.<!T>}
+   * @template T
+   */
+  value: function() {
+    return this[this.length - 1];
+  }
+});
 
 Common.moduleSetting = function(module) {
   return {
@@ -178,7 +197,7 @@ function installAgents(cdp) {
     const eventStr = method.split('.')[1];
 
     const paramsArr = [];
-    if (args) {
+    if (Object.keys(args).length > 0) {
       const domain = js_protocol.domains.find(d => d.domain === domainStr);
       const parameters = domain.events.find(c => c.name === eventStr).parameters;
       parameters.forEach(param => {
@@ -190,6 +209,14 @@ function installAgents(cdp) {
 }
 
 const target = createTarget();
+
+// From utilities
+/**
+ * @return {!Array<!VALUE>}
+ */
+Map.prototype.valuesArray = function() {
+  return Array.from(this.values());
+};
 
 // From utilities
 function defineMultimap() {
