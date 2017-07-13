@@ -15,7 +15,7 @@ const launchChrome = () =>
     logLevel: 'error'
   });
 
-/* global Common SDK Coverage Protocol */
+/* global Common SDK Coverage */
 
 launchChrome()
   .then(async chrome => {
@@ -31,13 +31,23 @@ launchChrome()
       const model = new Coverage.CoverageModel(target);
       model.start();
 
-      Page.navigate({url: 'https://paulirish.com/'});
+      Page.navigate({url: 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy'});
       await Page.loadEventFired();
 
       await model.stop();
       const coverage = model.entries();
 
-      console.log(coverage);
+      coverage.sort((a, b) => b.unusedSize() - a.unusedSize());
+
+      console.log('Coverage data: (sorted by unused bytes, descending)');
+      for (const file of coverage) {
+        console.log('--------------------------------------');
+        console.log(`File: ${file.url()}`);
+        console.log(`In total: ${file.unusedSize().toLocaleString()}B unused (${(file.unusedSize() / file.size()).toLocaleString()}% unused in the file).`);
+        console.log(`Segments found with more detail: ${file._coverageInfoByLocation.size}`);
+        console.log('');
+      }
+
     } catch (err) {
       console.error(err);
     } finally {
@@ -73,7 +83,6 @@ require('chrome-devtools-frontend/front_end/sdk/Script.js'); // for SDK.Debugger
 require('chrome-devtools-frontend/front_end/common/ResourceType.js'); // for SDK.Script.contentType
 
 
-
 Object.defineProperty(Array.prototype, 'peekLast', {
   /**
    * @return {!T|undefined}
@@ -102,9 +111,7 @@ function createTarget() {
   const id = 'main';
   const name = 'Main';
   const capabilitiesMask = SDK.Target.Capability.JS;
-  const connectionFactory = function() {
-    console.log('connected via CRI, folks');
-  };
+  const connectionFactory = _ => {};
   const parentTarget = null;
 
   const target = new SDK.Target(
@@ -127,27 +134,17 @@ function installAgents(cdp) {
   target.debuggerAgent = _ => debuggerAgent;
   target.runtimeAgent = _ => runtimeAgent;
 
-  target.registerProfilerDispatcher = dpcher => {
+  target.registerProfilerDispatcher = dpcher => registerDispatcher(dpcher, 'Profiler');
+  target.registerDebuggerDispatcher = dpcher => registerDispatcher(dpcher, 'Debugger');
+  target.registerRuntimeDispatcher = dpcher => registerDispatcher(dpcher, 'Runtime');
+
+  function registerDispatcher(dispatcher, domain) {
     cdp.on('event', message => {
-      if (!message.method.startsWith('Profiler.')) return;
+      if (!message.method.startsWith(`${domain}.`)) return;
       const evtName = message.method.split('.')[1];
-      dpcher[evtName].apply(dpcher, spreadArguments(message.method, message.params));
+      dispatcher[evtName].apply(dispatcher, spreadArguments(message.method, message.params));
     });
-  };
-  target.registerDebuggerDispatcher = dpcher => {
-    cdp.on('event', message => {
-      if (!message.method.startsWith('Debugger.')) return;
-      const evtName = message.method.split('.')[1];
-      dpcher[evtName].apply(dpcher, spreadArguments(message.method, message.params));
-    });
-  };
-  target.registerRuntimeDispatcher = dpcher => {
-    cdp.on('event', message => {
-      if (!message.method.startsWith('Runtime.')) return;
-      const evtName = message.method.split('.')[1];
-      dpcher[evtName].apply(dpcher, spreadArguments(message.method, message.params));
-    });
-  };
+  }
 
   // Install a proxy over every CDP method in each domain passed in
   function installProxies(cdpDomain, domainStr) {
@@ -175,6 +172,7 @@ function installAgents(cdp) {
     }
     return cdpDomain;
   }
+
   // DevTools agents speak a language of ordered arguments, but CRI takes an object of named properties
   // Here we convert from the former to the latter
   function unspreadArguments(method, args) {
